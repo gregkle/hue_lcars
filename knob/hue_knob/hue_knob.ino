@@ -45,11 +45,12 @@ static volatile bool level_dirty = false;
 static volatile uint32_t last_knob_ms = 0;
 
 extern "C" {
-extern const lv_font_t lcars_18, lcars_26, lcars_40;
+extern const lv_font_t lcars_16, lcars_22, lcars_34;
 }
 
 static lv_obj_t *slider, *status, *title, *battery_label, *battery_block;
-static lv_obj_t *level_blocks[10];
+static const int N_LEVEL = 12;
+static lv_obj_t *level_blocks[N_LEVEL];
 static volatile bool preview_alert = false;  // serial 'T': show the red-alert look without touching lights
 static volatile bool alert_active = false;   // alert light is red: keep it out of the dimmer
 static bool themed_alert = false;
@@ -114,8 +115,8 @@ static lv_obj_t *text(lv_obj_t *parent, const lv_font_t *font, uint32_t color, c
 
 // Black lettering tucked into the bottom-right of a panel, LCARS style.
 static void panel_code(lv_obj_t *panel, const char *t) {
-  lv_obj_t *l = text(panel, &lcars_18, 0x000000, t);
-  lv_obj_align(l, LV_ALIGN_BOTTOM_RIGHT, -6, -1);
+  lv_obj_t *l = text(panel, &lcars_16, 0x000000, t);
+  lv_obj_align(l, LV_ALIGN_BOTTOM_RIGHT, -5, 0);
 }
 
 static void apply_theme(bool alert) {
@@ -145,8 +146,8 @@ static void ui_timer_cb(lv_timer_t *) {
     level_dirty = false;
     int bri = level;
     if (bri >= 0) {
-      int lit = lights_on ? (bri * 10 + 253) / 254 : 0;
-      for (int i = 0; i < 10; i++)
+      int lit = lights_on ? (bri * N_LEVEL + 253) / 254 : 0;
+      for (int i = 0; i < N_LEVEL; i++)
         lv_obj_set_style_bg_color(level_blocks[i], lv_color_hex(i < lit ? C_GOLD : C_DIM), 0);
     }
   }
@@ -188,49 +189,61 @@ extern "C" void ui_build(void) {
   lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
   lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
-  // The frame: a top elbow and a bottom elbow joined by a segmented left column.
-  // Each elbow is a big rounded panel with a black rounded panel cut out of it; the round
-  // display itself trims the outer corners.
-  lv_obj_t *top = block(40, 40, 190, 200, 44, C_ORANGE, C_ALERT1);
-  black(92, 72, 230, 140, 22);
-  lv_obj_t *bottom = block(40, 200, 190, 148, 44, C_PEACH, C_ALERT2);
-  black(92, 100, 230, 216, 22);  // starts high so its rounded corner hides inside the top cutout
-  // column segments (drawn over the elbows' inner ends), separated by 4 px black gaps
-  black(40, 164, 52, 4, 0);
-  lv_obj_t *seg1 = block(40, 168, 52, 44, 0, C_SKY, C_ALERT3);
-  black(40, 212, 52, 4, 0);
-  lv_obj_t *seg2 = block(40, 216, 52, 28, 0, C_LILAC, C_ALERT1);
-  black(40, 244, 52, 4, 0);
-  lv_obj_set_pos(text(scr, &lcars_18, 0x000000, "93"), 68, 140);  // bottom of the top elbow's column
+  // The frame: a top elbow and a bottom elbow joined by a segmented left column that hugs
+  // the screen edge. Each elbow is a big rounded panel with a black rounded panel cut out of
+  // it; the round display itself trims the outer corners.
+  const int CX = 18, CW = 40, BAR = 24;      // column x / width, bar thickness
+  const int TOP = 26, BOT = 334;             // outer edges of the top and bottom bars
+  const int IX = CX + CW;                    // inner edge of the column
+  block(CX, TOP, 200, 220, 40, C_ORANGE, C_ALERT1);
+  black(IX, TOP + BAR, 280, 150, 20);
+  lv_obj_t *bottom = block(CX, 200, 200, BOT - 200, 40, C_PEACH, C_ALERT2);
+  black(IX, 90, 280, BOT - BAR - 90, 20);    // starts high so its rounded corner hides in the top cutout
+  // column segments over the elbows' inner ends, separated by 4 px black gaps
+  black(CX, 150, CW, 4, 0);
+  lv_obj_t *seg1 = block(CX, 154, CW, 44, 0, C_SKY, C_ALERT3);
+  black(CX, 198, CW, 4, 0);
+  lv_obj_t *seg2 = block(CX, 202, CW, 26, 0, C_LILAC, C_ALERT1);
+  black(CX, 228, CW, 4, 0);
+  lv_obj_set_pos(text(scr, &lcars_16, 0x000000, "93"), IX - 22, 128);  // bottom of the top elbow's column
   panel_code(seg1, "43");
   panel_code(seg2, "07");
-  (void)bottom;
   // top bar continues to the right
-  block(234, 40, 36, 32, 0, C_PEACH, C_ALERT3);
-  block(274, 40, 60, 32, 16, C_LILAC, C_ALERT2);
-  // bottom bar: battery readout in the elbow, then a status block
-  battery_label = text(bottom, &lcars_18, 0x000000, "PWR");
-  lv_obj_align(battery_label, LV_ALIGN_BOTTOM_RIGHT, -8, -5);
-  battery_block = block(234, 316, 30, 32, 0, C_SKY, C_ALERT3);
-  block(268, 316, 60, 32, 16, C_PURPLE, C_ALERT1);
+  block(222, TOP, 30, BAR, 0, C_PEACH, C_ALERT3);
+  block(256, TOP, 70, BAR, BAR / 2, C_LILAC, C_ALERT2);
+  // bottom bar: battery readout in the elbow (kept clear of where the screen edge cuts it),
+  // then a status block and an end cap
+  battery_label = text(scr, &lcars_16, 0x000000, "PWR");
+  lv_obj_set_width(battery_label, 80);
+  lv_obj_set_style_text_align(battery_label, LV_TEXT_ALIGN_RIGHT, 0);
+  lv_obj_set_pos(battery_label, 110, BOT - BAR + 1);
+  (void)bottom;
+  battery_block = block(222, BOT - BAR, 26, BAR, 0, C_SKY, C_ALERT3);
+  block(252, BOT - BAR, 70, BAR, BAR / 2, C_PURPLE, C_ALERT1);
 
-  title = text(scr, &lcars_26, C_ORANGE, "TREEHOUSE");
-  lv_obj_align(title, LV_ALIGN_TOP_RIGHT, -46, 76);
+  // Content area, right of the column
+  const int X0 = IX + 14, XW = 318 - X0;
 
-  // Illumination: ten blocks, lit by the room's brightness
-  lv_obj_t *il = text(scr, &lcars_18, C_PEACH, "ILLUMINATION");
-  lv_obj_set_pos(il, 104, 110);
-  for (int i = 0; i < 10; i++)
-    level_blocks[i] = block(104 + i * 22, 134, 18, 24, 0, 0, 0);  // coloured by ui_timer_cb
-  for (int i = 0; i < 10; i++) lv_obj_set_style_bg_color(level_blocks[i], lv_color_hex(C_DIM), 0);
+  title = text(scr, &lcars_22, C_ORANGE, "TREEHOUSE");
+  lv_obj_set_width(title, XW);
+  lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_RIGHT, 0);
+  lv_obj_set_pos(title, X0, 56);
+
+  // Illumination: a row of blocks, lit by the room's brightness
+  lv_obj_set_pos(text(scr, &lcars_16, C_PEACH, "ILLUMINATION"), X0, 94);
+  const int LW = (XW + 4) / N_LEVEL - 4;
+  for (int i = 0; i < N_LEVEL; i++) {
+    level_blocks[i] = block(X0 + i * (LW + 4), 116, LW, 20, 0, 0, 0);  // coloured by ui_timer_cb
+    lv_obj_set_style_bg_color(level_blocks[i], lv_color_hex(C_DIM), 0);
+  }
 
   // Slider: RESET pill on the left, ALERT pill on the right, orange handle in the middle.
-  const int SX = 104, SY = 172, SW = 216, SH = 56;
-  lv_obj_t *rp = block(SX, SY, 64, SH, SH / 2, C_LILAC, C_LILAC);
-  lv_obj_t *ap = block(SX + SW - 64, SY, 64, SH, SH / 2, C_RED, C_RED);
-  lv_obj_align(text(rp, &lcars_26, 0x000000, "RESET"), LV_ALIGN_CENTER, 0, 0);
-  lv_obj_align(text(ap, &lcars_26, 0x000000, "ALERT"), LV_ALIGN_CENTER, 0, 0);
-  block(SX + 64, SY + SH / 2 - 2, SW - 128, 4, 0, C_PEACH, C_ALERT2);  // rail
+  const int SX = X0, SY = 154, SW = XW, SH = 48, PW = 62;
+  lv_obj_t *rp = block(SX, SY, PW, SH, SH / 2, C_LILAC, C_LILAC);
+  lv_obj_t *ap = block(SX + SW - PW, SY, PW, SH, SH / 2, C_RED, C_RED);
+  lv_obj_align(text(rp, &lcars_22, 0x000000, "RESET"), LV_ALIGN_CENTER, 0, 0);
+  lv_obj_align(text(ap, &lcars_22, 0x000000, "ALERT"), LV_ALIGN_CENTER, 0, 0);
+  block(SX + PW, SY + SH / 2 - 2, SW - 2 * PW, 4, 0, C_PEACH, C_ALERT2);  // rail
 
   slider = lv_slider_create(scr);
   lv_obj_set_pos(slider, SX + SH / 2, SY);
@@ -242,7 +255,7 @@ extern "C" void ui_build(void) {
   lv_obj_set_style_bg_opa(slider, LV_OPA_TRANSP, LV_PART_MAIN);
   lv_obj_set_style_bg_opa(slider, LV_OPA_TRANSP, LV_PART_INDICATOR);
   lv_obj_set_style_bg_color(slider, lv_color_hex(C_ORANGE), LV_PART_KNOB);
-  lv_obj_set_style_radius(slider, 10, LV_PART_KNOB);
+  lv_obj_set_style_radius(slider, 8, LV_PART_KNOB);
   lv_obj_set_style_pad_all(slider, 0, LV_PART_KNOB);
   lv_obj_set_style_border_color(slider, lv_color_black(), LV_PART_KNOB);
   lv_obj_set_style_border_width(slider, 4, LV_PART_KNOB);
@@ -251,10 +264,10 @@ extern "C" void ui_build(void) {
   lv_obj_set_ext_click_area(slider, 12);
   lv_obj_add_event_cb(slider, on_slider, LV_EVENT_ALL, nullptr);
 
-  status = text(scr, &lcars_40, C_GREY, "");
-  lv_obj_set_width(status, 216);
+  status = text(scr, &lcars_34, C_GREY, "");
+  lv_obj_set_width(status, XW);
   lv_obj_set_style_text_align(status, LV_TEXT_ALIGN_RIGHT, 0);
-  lv_obj_set_pos(status, 104, 240);
+  lv_obj_set_pos(status, X0, 222);
   set_status(C_GREY, "CONNECTING");
 
   lv_timer_create(ui_timer_cb, 20, nullptr);
