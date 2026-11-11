@@ -1,0 +1,7 @@
+# secrets
+config.json
+secrets.h
+
+# fetched / generated
+knob/libraries/lvgl/
+knob/build/

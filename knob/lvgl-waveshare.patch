@@ -1,0 +1,10 @@
+--- a/src/core/lv_refr.c
++++ b/src/core/lv_refr.c
+@@ -1209,6 +1209,7 @@
+         lv_coord_t row = 0;
+         while(row < area_h) {
+             lv_coord_t height = LV_MIN(max_row, area_h - row);
++            height &= ~0x1UL;
+             draw_buf->flushing = 1;
+             if((row == 0) && (area_h >= area_w)) {
+                 /*Rotate the initial area as a square*/
