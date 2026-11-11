@@ -103,7 +103,6 @@ static lv_obj_t *block(int x, int y, int w, int h, int radius, uint32_t color, u
   if (color != 0 && n_panels < 24) panels[n_panels++] = {o, color, alert_color};
   return o;
 }
-static lv_obj_t *black(int x, int y, int w, int h, int radius) { return block(x, y, w, h, radius, 0, 0); }
 
 static lv_obj_t *text(lv_obj_t *parent, const lv_font_t *font, uint32_t color, const char *t) {
   lv_obj_t *l = lv_label_create(parent);
@@ -113,15 +112,40 @@ static lv_obj_t *text(lv_obj_t *parent, const lv_font_t *font, uint32_t color, c
   return l;
 }
 
-// Black lettering tucked into the bottom-right of a panel, LCARS style.
-static void panel_code(lv_obj_t *panel, const char *t) {
-  lv_obj_t *l = text(panel, &lcars_16, 0x000000, t);
-  lv_obj_align(l, LV_ALIGN_BOTTOM_RIGHT, -5, 0);
+// A ring segment centred on the screen. Angles in degrees, 0 = 3 o'clock, clockwise.
+static lv_obj_t *arc(int diameter, int width, int a0, int a1, uint32_t color, uint32_t alert_color,
+                     bool rounded = false) {
+  lv_obj_t *a = lv_arc_create(lv_scr_act());
+  lv_obj_set_size(a, diameter, diameter);
+  lv_obj_center(a);
+  lv_arc_set_bg_angles(a, a0, a1);
+  lv_obj_remove_style(a, nullptr, LV_PART_KNOB);
+  lv_obj_set_style_arc_opa(a, LV_OPA_TRANSP, LV_PART_INDICATOR);
+  lv_obj_set_style_arc_width(a, width, LV_PART_MAIN);
+  lv_obj_set_style_arc_rounded(a, rounded, LV_PART_MAIN);
+  lv_obj_set_style_arc_color(a, lv_color_hex(color), LV_PART_MAIN);
+  lv_obj_set_style_pad_all(a, 0, 0);
+  lv_obj_clear_flag(a, LV_OBJ_FLAG_CLICKABLE);
+  if (color != 0 && n_panels < 24) panels[n_panels++] = {a, color, alert_color};
+  return a;
+}
+
+// Colours a panel, whether it's a block or a ring segment.
+static void paint(lv_obj_t *o, uint32_t color) {
+  if (lv_obj_check_type(o, &lv_arc_class)) lv_obj_set_style_arc_color(o, lv_color_hex(color), LV_PART_MAIN);
+  else lv_obj_set_style_bg_color(o, lv_color_hex(color), 0);
+}
+
+// Black lettering on the ring at angle `deg`, radius `r`.
+static void ring_code(int deg, int r, const char *t) {
+  lv_obj_t *l = text(lv_scr_act(), &lcars_16, 0x000000, t);
+  float rad = deg * PI / 180;
+  lv_obj_align(l, LV_ALIGN_CENTER, lroundf(r * cosf(rad)), lroundf(r * sinf(rad)));
 }
 
 static void apply_theme(bool alert) {
   for (int i = 0; i < n_panels; i++)
-    lv_obj_set_style_bg_color(panels[i].obj, lv_color_hex(alert ? panels[i].alert : panels[i].normal), 0);
+    paint(panels[i].obj, alert ? panels[i].alert : panels[i].normal);
   lv_obj_set_style_text_color(title, lv_color_hex(alert ? C_ALERT2 : C_ORANGE), 0);
   themed_alert = alert;
 }
@@ -148,7 +172,7 @@ static void ui_timer_cb(lv_timer_t *) {
     if (bri >= 0) {
       int lit = lights_on ? (bri * N_LEVEL + 253) / 254 : 0;
       for (int i = 0; i < N_LEVEL; i++)
-        lv_obj_set_style_bg_color(level_blocks[i], lv_color_hex(i < lit ? C_GOLD : C_DIM), 0);
+        paint(level_blocks[i], i < lit ? C_GOLD : C_DIM);
     }
   }
 }
@@ -179,7 +203,7 @@ static void battery_timer_cb(lv_timer_t *) {  // runs in the LVGL task
   uint32_t c = charging ? C_GOLD : pct <= 15 ? C_RED : C_SKY;
   for (int i = 0; i < n_panels; i++)
     if (panels[i].obj == battery_block) panels[i].normal = c;
-  if (!themed_alert) lv_obj_set_style_bg_color(battery_block, lv_color_hex(c), 0);
+  if (!themed_alert) paint(battery_block, c);
   static int n = 0;
   if (n++ % 6 == 0) Serial.printf("battery %.2f V (%d%%)\n", smooth, pct);
 }
@@ -189,56 +213,41 @@ extern "C" void ui_build(void) {
   lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
   lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
-  // The frame: a top elbow and a bottom elbow joined by a segmented left column that hugs
-  // the screen edge. Each elbow is a big rounded panel with a black rounded panel cut out of
-  // it; the round display itself trims the outer corners.
-  const int CX = 18, CW = 40, BAR = 24;      // column x / width, bar thickness
-  const int TOP = 26, BOT = 334;             // outer edges of the top and bottom bars
-  const int IX = CX + CW;                    // inner edge of the column
-  block(CX, TOP, 200, 220, 40, C_ORANGE, C_ALERT1);
-  black(IX, TOP + BAR, 280, 150, 20);
-  lv_obj_t *bottom = block(CX, 200, 200, BOT - 200, 40, C_PEACH, C_ALERT2);
-  black(IX, 90, 280, BOT - BAR - 90, 20);    // starts high so its rounded corner hides in the top cutout
-  // column segments over the elbows' inner ends, separated by 4 px black gaps
-  black(CX, 150, CW, 4, 0);
-  lv_obj_t *seg1 = block(CX, 154, CW, 44, 0, C_SKY, C_ALERT3);
-  black(CX, 198, CW, 4, 0);
-  lv_obj_t *seg2 = block(CX, 202, CW, 26, 0, C_LILAC, C_ALERT1);
-  black(CX, 228, CW, 4, 0);
-  lv_obj_set_pos(text(scr, &lcars_16, 0x000000, "93"), IX - 22, 128);  // bottom of the top elbow's column
-  panel_code(seg1, "43");
-  panel_code(seg2, "07");
-  // top bar continues to the right
-  block(222, TOP, 30, BAR, 0, C_PEACH, C_ALERT3);
-  block(256, TOP, 70, BAR, BAR / 2, C_LILAC, C_ALERT2);
-  // bottom bar: battery readout in the elbow (kept clear of where the screen edge cuts it),
-  // then a status block and an end cap
-  battery_label = text(scr, &lcars_16, 0x000000, "PWR");
-  lv_obj_set_width(battery_label, 80);
-  lv_obj_set_style_text_align(battery_label, LV_TEXT_ALIGN_RIGHT, 0);
-  lv_obj_set_pos(battery_label, 110, BOT - BAR + 1);
-  (void)bottom;
-  battery_block = block(222, BOT - BAR, 26, BAR, 0, C_SKY, C_ALERT3);
-  block(252, BOT - BAR, 70, BAR, BAR / 2, C_PURPLE, C_ALERT1);
+  // The frame: an LCARS frame bent into a ring around the screen edge, open on the right.
+  // The left side is thicker (the classic LCARS column), stepping down to thinner bars
+  // across the top and bottom; segments are split by 2-degree black gaps.
+  const int RD = 352, THICK = 34, THIN = 20;
+  arc(RD, THICK, 216, 246, C_ORANGE, C_ALERT1);   // top elbow: thick part...
+  arc(RD, THIN, 246, 302, C_ORANGE, C_ALERT1);    // ...running into the top bar
+  arc(RD, THICK, 182, 214, C_SKY, C_ALERT3);
+  arc(RD, THICK, 148, 180, C_LILAC, C_ALERT1);
+  arc(RD, THICK, 116, 146, C_PEACH, C_ALERT2);    // bottom elbow: thick part...
+  arc(RD, THIN, 72, 116, C_PEACH, C_ALERT2);      // ...running into the bottom bar
+  arc(RD, THIN, 304, 324, C_PEACH, C_ALERT3);
+  arc(RD, THIN, 326, 346, C_LILAC, C_ALERT2, true);
+  battery_block = arc(RD, THIN, 52, 70, C_SKY, C_ALERT3);
+  arc(RD, THIN, 32, 50, C_PURPLE, C_ALERT1, true);
+  const int CODE_R = RD / 2 - THICK / 2;
+  ring_code(228, CODE_R, "93");
+  ring_code(198, CODE_R, "43");
+  ring_code(164, CODE_R, "07");
+  ring_code(131, CODE_R, "12");
 
-  // Content area, right of the column
-  const int X0 = IX + 14, XW = 318 - X0;
+  // Illumination: curved blocks across the top, inside the frame, lit by room brightness
+  for (int i = 0; i < N_LEVEL; i++) {
+    int a0 = 216 + i * 9;
+    level_blocks[i] = arc(270, 12, a0, a0 + 7, C_DIM, C_DIM);
+  }
+  n_panels -= N_LEVEL;  // coloured by ui_timer_cb, not by the theme
 
   title = text(scr, &lcars_22, C_ORANGE, "TREEHOUSE");
-  lv_obj_set_width(title, XW);
-  lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_RIGHT, 0);
-  lv_obj_set_pos(title, X0, 56);
+  lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 68);
 
-  // Illumination: a row of blocks, lit by the room's brightness
-  lv_obj_set_pos(text(scr, &lcars_16, C_PEACH, "ILLUMINATION"), X0, 94);
-  const int LW = (XW + 4) / N_LEVEL - 4;
-  for (int i = 0; i < N_LEVEL; i++) {
-    level_blocks[i] = block(X0 + i * (LW + 4), 116, LW, 20, 0, 0, 0);  // coloured by ui_timer_cb
-    lv_obj_set_style_bg_color(level_blocks[i], lv_color_hex(C_DIM), 0);
-  }
+  battery_label = text(scr, &lcars_16, C_PEACH, "PWR");
+  lv_obj_align(battery_label, LV_ALIGN_TOP_MID, 0, 270);
 
   // Slider: RESET pill on the left, ALERT pill on the right, orange handle in the middle.
-  const int SX = X0, SY = 154, SW = XW, SH = 48, PW = 62;
+  const int SW = 236, SX = 180 - SW / 2, SY = 132, SH = 48, PW = 62;
   lv_obj_t *rp = block(SX, SY, PW, SH, SH / 2, C_LILAC, C_LILAC);
   lv_obj_t *ap = block(SX + SW - PW, SY, PW, SH, SH / 2, C_RED, C_RED);
   lv_obj_align(text(rp, &lcars_22, 0x000000, "RESET"), LV_ALIGN_CENTER, 0, 0);
@@ -265,9 +274,9 @@ extern "C" void ui_build(void) {
   lv_obj_add_event_cb(slider, on_slider, LV_EVENT_ALL, nullptr);
 
   status = text(scr, &lcars_34, C_GREY, "");
-  lv_obj_set_width(status, XW);
-  lv_obj_set_style_text_align(status, LV_TEXT_ALIGN_RIGHT, 0);
-  lv_obj_set_pos(status, X0, 222);
+  lv_obj_set_width(status, 260);
+  lv_obj_set_style_text_align(status, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_align(status, LV_ALIGN_TOP_MID, 0, 196);
   set_status(C_GREY, "CONNECTING");
 
   lv_timer_create(ui_timer_cb, 20, nullptr);
