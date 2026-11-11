@@ -62,8 +62,10 @@ static void start_alert() {
   bool was_ok = true;
   while (pending == CMD_NONE) {
     bool cycle_ok = set_lights(alert_ids, n, RED);
+    buzz(BUZZ_ON_ALERT);  // after the requests, so the buzz lines up with the bulbs
     if (interrupted(phase)) break;
     cycle_ok &= set_lights(alert_ids, n, DARK);
+    buzz(false);
     if (interrupted(phase)) break;
     if (cycle_ok != was_ok) {  // only touch the screen when things change
       if (cycle_ok) show(C_RED, "RED ALERT");
@@ -71,6 +73,7 @@ static void start_alert() {
       was_ok = cycle_ok;
     }
   }
+  buzz(false);
 }
 
 // Resets the alert bulbs (or, with no alert running, the selected room's colour bulbs) to

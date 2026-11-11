@@ -35,6 +35,8 @@ static const bool CLOCKWISE_BRIGHTER = true;   // flip if the knob feels backwar
 static const int ENCODER_A = 8, ENCODER_B = 7;
 static const int BATTERY_PIN = 1;              // GPIO1 / ADC1_CH0, battery through a 1:2 divider
 static const int HOLD_MS = 1000;               // how long to hold RED ALERT / RESET
+static const bool BUZZ_ON_ALERT = true;        // vibrate on and off with the red-alert flashes
+static const uint8_t BUZZ_STRENGTH = 127;      // vibration strength, 1..127
 
 // LCARS palette
 static const uint32_t C_ORANGE = 0xFF9900, C_PEACH = 0xFFCC99, C_LILAC = 0xCC99CC, C_PURPLE = 0x9999FF,
@@ -107,6 +109,8 @@ static void dimmer_task(void *);
 static void request(Cmd c);
 static void idle_screen();
 static void worker_task(void *);
+static void haptic_init();
+static void buzz(bool on);
 // ui_main.ino
 static void show(uint32_t color, const char *text);
 static void send_snapshot();
@@ -138,6 +142,7 @@ void setup() {
   strlcpy(sel_room, prefs.getString("room", DEFAULT_ROOM).c_str(), sizeof sel_room);
 
   Touch_Init();
+  haptic_init();                   // the vibration motor shares the touch I2C bus
   lcd_lvgl_Init();                 // calls ui_build()
   lcd_bl_pwm_bsp_init(LCD_PWM_MODE_255);
 
@@ -165,6 +170,7 @@ void loop() {
   while (Serial.available()) {
     int c = Serial.read();
     if (c == 'S') send_snapshot();
+    if (c == 'B') { buzz(true); delay(300); buzz(false); }  // test the vibration motor
     if (c == 'T') {
       preview_alert = !preview_alert;
       idle_screen();
