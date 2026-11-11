@@ -2,10 +2,10 @@
 //
 // Main screen (for the selected room or zone):
 //   Turn the knob          -> dim / brighten the room
-//   Slide right to ALERT   -> red alert: the room's colour bulbs flash red until reset
-//   Slide left to RESET    -> colour bulbs back to white, matched to the rest of the room
+//   Hold RED ALERT (1 s)   -> red alert: the room's colour bulbs flash red until reset
+//   Hold RESET (1 s)       -> colour bulbs back to white, matched to the rest of the room
 //   ROOM                   -> pick which room / zone the remote controls (remembered)
-//   COLOR                  -> colour / hue / intensity for the room, or (LIGHTS) one light in it
+//   COLOR                  -> colour / white temperature / intensity for the room, or (LIGHTS) one light
 //
 // Talks to the Hue bridge directly over WiFi; no computer needed once flashed.
 // The other .ino files in this folder are compiled together with this one, in name order:
@@ -29,12 +29,12 @@
 static const char *DEFAULT_ROOM = "93";        // used until a room is picked on the device
 static const int FLASH_MS = 500;               // red-alert on/off phase (longer for many bulbs)
 static const int DIM_STEP = 16;                // main-screen brightness change per knob click
-static const int HUE_STEP = 65536 / 72;        // colour control: 5 degrees of hue per click
+static const int CT_STEP = 10;                 // colour control: white temperature (mireds) per click
 static const int BRI_STEP = 13;                // colour control: ~5% brightness per click
 static const bool CLOCKWISE_BRIGHTER = true;   // flip if the knob feels backwards
 static const int ENCODER_A = 8, ENCODER_B = 7;
 static const int BATTERY_PIN = 1;              // GPIO1 / ADC1_CH0, battery through a 1:2 divider
-static const int SLIDE_TRIGGER = 90;           // how far (of 100) the slider must go to count
+static const int HOLD_MS = 1000;               // how long to hold RED ALERT / RESET
 
 // LCARS palette
 static const uint32_t C_ORANGE = 0xFF9900, C_PEACH = 0xFFCC99, C_LILAC = 0xCC99CC, C_PURPLE = 0x9999FF,
@@ -70,7 +70,7 @@ static TaskHandle_t worker = nullptr;
 // the bridge is only asked for the real value once the knob has been still for a moment.
 static TaskHandle_t dimmer = nullptr;
 static volatile int knob_delta = 0;   // clicks not yet sent to the bridge
-static volatile int level = -1;       // estimated room brightness 1..254, -1 = unknown
+static volatile int level = -1;       // estimated room brightness 1..254 (0 = off), -1 = unknown
 static volatile bool lights_on = false;
 static volatile bool level_dirty = false;
 static volatile uint32_t last_knob_ms = 0;
@@ -110,6 +110,7 @@ static void worker_task(void *);
 // ui_main.ino
 static void show(uint32_t color, const char *text);
 static void send_snapshot();
+static void debug_press(bool on);
 // ui_menu.ino
 static void menu_init();
 static void menu_tick();
@@ -172,6 +173,11 @@ void loop() {
     // 0/1/2 control tabs, M main screen.
     if (strchr("RCL012M", c) && c && example_lvgl_lock(-1)) {
       debug_nav(c);
+      example_lvgl_unlock();
+    }
+    // P / p: show / clear the alert button's pressed look (never fires it)
+    if ((c == 'P' || c == 'p') && example_lvgl_lock(-1)) {
+      debug_press(c == 'P');
       example_lvgl_unlock();
     }
   }

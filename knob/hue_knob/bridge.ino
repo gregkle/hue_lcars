@@ -162,6 +162,7 @@ static void select_room(const char *id) {
 }
 
 // ---------- Main-screen dimmer ----------
+static bool bridge_on = false;  // whether the room was on, as last read or sent (dimmer task only)
 static bool knob_recently_used(uint32_t ms) { return millis() - last_knob_ms < ms; }
 
 // Reads the real brightness (picks up changes from the Hue app, corrects drift).
@@ -175,7 +176,7 @@ static void refresh_level() {
   }
   int bri = room_average_bri(room, alert_ids, alert_active ? n_alert : 0);
   if (bri == -2 || knob_recently_used(1500)) return;  // don't fight the user mid-turn
-  lights_on = bri >= 0;
+  lights_on = bridge_on = bri >= 0;
   if (bri >= 0) level = bri;
   else if (level < 0) level = 1;
   level_dirty = true;
@@ -191,8 +192,13 @@ static void on_knob(void *, void *dir) {  // runs in the encoder's timer callbac
   __atomic_add_fetch(&knob_delta, d, __ATOMIC_RELAXED);
   last_knob_ms = millis();
   if (level >= 0) {
-    if (d > 0) lights_on = true;  // turning up switches the lights on
-    level = constrain(level + d * DIM_STEP, 1, 254);
+    // 0 = off. Turning down stops once at the dimmest setting, then the next click switches
+    // the room off; turning up from off switches it back on.
+    int from = lights_on ? level : 0;
+    int to = from + d * DIM_STEP;
+    if (to < 1) to = from > 1 ? 1 : 0;
+    level = min(to, 254);
+    lights_on = level > 0;
     level_dirty = true;
   }
   if (dimmer) xTaskNotifyGive(dimmer);
@@ -213,14 +219,26 @@ static void dimmer_task(void *) {
       HueRoom room;
       if (!get_room(sel_room, room)) break;
       int inc = constrain(clicks * DIM_STEP, -254, 254);
+      int target = lights_on ? level : 0;
+      // Already off: say nothing. Hue bulbs flash on briefly if sent "off" again with a fade.
+      if (level >= 0 && target == 0 && !bridge_on) continue;
       char body[64];
-      snprintf(body, sizeof body, inc > 0 ? "{\"on\":true,\"bri_inc\":%d,\"transitiontime\":2}"
-                                           : "{\"bri_inc\":%d,\"transitiontime\":2}", inc);
+      if (level < 0)  // level not read yet: just nudge
+        snprintf(body, sizeof body, inc > 0 ? "{\"on\":true,\"bri_inc\":%d,\"transitiontime\":2}"
+                                             : "{\"bri_inc\":%d,\"transitiontime\":2}", inc);
+      else if (target == 0)  // dimmed all the way down
+        snprintf(body, sizeof body, "{\"on\":false,\"transitiontime\":2}");
+      else if (!bridge_on)  // coming back on: start from the knob's level, not the old brightness
+        snprintf(body, sizeof body, "{\"on\":true,\"bri\":%d,\"transitiontime\":2}", target);
+      else
+        snprintf(body, sizeof body, inc > 0 ? "{\"on\":true,\"bri_inc\":%d,\"transitiontime\":2}"
+                                             : "{\"bri_inc\":%d,\"transitiontime\":2}", inc);
+      if (level >= 0) bridge_on = target > 0;
       bool has_alert = false;
       for (int i = 0; i < room.n; i++) has_alert |= is_alert_light(room.member[i]);
       if (!has_alert) {
         int code = hue_put(String("/groups/") + room.id + "/action", body);
-        Serial.printf("[%lu] dim %s %+d -> %d\n", millis(), room.name, inc, code);
+        Serial.printf("[%lu] dim %s %s -> %d\n", millis(), room.name, body, code);
         vTaskDelay(pdMS_TO_TICKS(250));  // Hue asks for <= ~4 group commands/s; extra clicks batch up
       } else {
         // Red alert in this room: dim every other bulb, one at a time.

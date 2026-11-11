@@ -1,7 +1,8 @@
 // Menus:
 //   ROOM  (main)  -> room picker list  -> picks the main screen's room
 //   COLOR (main)  -> colour control for the room -> LIGHTS -> light list -> colour control for one light
-// The colour control has three tabs: COLOR (swatches), HUE (outer ring is a colour wheel) and
+// The colour control has three tabs: COLOR (swatches), WHITE (outer ring is a warm-to-cool
+// white temperature scale) and
 // INTENSITY (outer ring is a brightness gauge). The knob scrolls lists and adjusts hue / intensity.
 //
 // UI code runs in the LVGL task. Bridge traffic for the menus runs in menu_task.
@@ -24,11 +25,11 @@ static ListKind list_kind;
 static char list_room[6];                 // LIST_LIGHTS: whose lights
 static char list_ids[MAX_MEMBERS + 1][6]; // id behind each list row
 
-static lv_obj_t *ctrl_scr, *ctrl_title, *ctrl_frame, *ctrl_wheel, *wheel_marker, *ctrl_gauge;
+static lv_obj_t *ctrl_scr, *ctrl_title, *ctrl_frame, *ctrl_temps, *temp_marker, *ctrl_gauge;
 static lv_obj_t *swatch_layer, *preview, *preview_label, *power_btn, *lights_btn;
 static lv_obj_t *tabs[3];
 static lv_obj_t *swatches[12];
-static int tab = 0;                       // 0 COLOR, 1 HUE, 2 INTENSITY
+static int tab = 0;                       // 0 COLOR, 1 WHITE, 2 INTENSITY
 static bool ctrl_from_list = false;       // BACK goes to the light list (else the main screen)
 
 static const uint32_t ROW_COLORS[] = {C_ORANGE, C_PEACH, C_LILAC, C_SKY, C_GOLD, C_PURPLE};
@@ -77,7 +78,7 @@ static void add_row(int i, const char *name, const char *code, bool selected) {
   lv_obj_set_style_bg_color(row, lv_color_hex(selected ? C_RED : ROW_COLORS[i % 6]), 0);
   lv_obj_set_style_bg_color(row, lv_color_white(), LV_STATE_PRESSED);
   lv_obj_t *l = text(row, &lcars_22, 0x000000, name);
-  lv_obj_set_size(l, 160, 30);  // fixed height so long names end in "..." instead of wrapping
+  lv_obj_set_size(l, 154, 30);  // fixed height so long names end in "..." instead of wrapping
   lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
   lv_obj_align(l, LV_ALIGN_LEFT_MID, 16, 0);
   lv_obj_align(text(row, &lcars_16, 0x000000, code), LV_ALIGN_RIGHT_MID, -14, 0);
@@ -124,40 +125,42 @@ static void build_list_screen() {
   lcars_ring(list_scr, false, codes);
 
   list_title = text(list_scr, &lcars_22, C_ORANGE, "");
-  lv_obj_set_size(list_title, 190, 30);
+  lv_obj_set_size(list_title, 170, 30);
   lv_obj_set_style_text_align(list_title, LV_TEXT_ALIGN_CENTER, 0);
   lv_label_set_long_mode(list_title, LV_LABEL_LONG_DOT);
-  lv_obj_align(list_title, LV_ALIGN_TOP_MID, 0, 46);
+  lv_obj_align(list_title, LV_ALIGN_TOP_MID, 0, 48);
 
   list_box = lv_obj_create(list_scr);
   plain(list_box);
   lv_obj_add_flag(list_box, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_scrollbar_mode(list_box, LV_SCROLLBAR_MODE_OFF);
   lv_obj_set_style_bg_opa(list_box, LV_OPA_TRANSP, 0);
-  lv_obj_set_size(list_box, 228, 172);
-  lv_obj_set_pos(list_box, 66, 80);
+  lv_obj_set_size(list_box, 208, 162);
+  lv_obj_set_pos(list_box, 76, 84);
   lv_obj_set_flex_flow(list_box, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_row(list_box, 6, 0);
 
   list_note = text(list_scr, &lcars_22, C_PEACH, "");
   lv_obj_align(list_note, LV_ALIGN_CENTER, 0, -10);
 
-  pill(list_scr, 130, 262, 100, 34, C_LILAC, "BACK", on_list_back, nullptr);
+  pill(list_scr, 132, 254, 96, 34, C_LILAC, "BACK", on_list_back, nullptr);
 }
 
 // ---------- Colour control ----------
+static const int CT_MIN = 153, CT_MAX = 500;  // mireds: 6500 K .. 2000 K
+static int ct_angle(int ct) { return 135 + (CT_MAX - ct) * 270 / (CT_MAX - CT_MIN); }
 static void refresh_ctrl() {
   bool on = t_on;
   float v = on ? 0.35f + 0.65f * t_bri / 254.0f : 0;
   uint32_t rgb = !on ? C_DIM : t_use_ct ? ct_rgb(t_ct, v) : hsv_rgb(t_hue, t_sat, v);
   lv_obj_set_style_bg_color(preview, lv_color_hex(rgb), 0);
   if (!on) lv_label_set_text(preview_label, "OFF");
-  else if (tab == 1 && !t_use_ct) lv_label_set_text_fmt(preview_label, "H %d", (int)(t_hue * 360L / 65536));
+  else if (tab == 1) lv_label_set_text_fmt(preview_label, "%dK", (1000000 / t_ct + 50) / 100 * 100);
   else lv_label_set_text_fmt(preview_label, "%d%%", (t_bri * 100 + 127) / 254);
   lv_obj_set_style_text_color(preview_label, lv_color_hex(on && t_bri > 60 ? 0x000000 : C_PEACH), 0);
 
-  int deg = 270 + (int)(t_hue * 360L / 65536);
-  lv_arc_set_bg_angles(wheel_marker, (deg - 3 + 360) % 360, (deg + 3) % 360);
+  int deg = ct_angle(constrain(t_ct, CT_MIN, CT_MAX));
+  lv_arc_set_bg_angles(temp_marker, (deg - 3 + 360) % 360, (deg + 3) % 360);
   lv_arc_set_value(ctrl_gauge, on ? t_bri : 0);
 
   pill_label(power_btn, on ? "ON" : "OFF");
@@ -171,7 +174,7 @@ static void show_tab(int t) {
   auto vis = [](lv_obj_t *o, bool show) { if (show) lv_obj_clear_flag(o, LV_OBJ_FLAG_HIDDEN); else lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN); };
   vis(ctrl_frame, t == 0);
   vis(swatch_layer, t == 0);
-  vis(ctrl_wheel, t == 1);
+  vis(ctrl_temps, t == 1);
   vis(ctrl_gauge, t == 2);
   vis(preview, t != 0);
   refresh_ctrl();
@@ -186,7 +189,7 @@ static void mark(uint32_t fields) {
 
 static void on_tab(lv_event_t *e) {
   int t = (intptr_t)lv_event_get_user_data(e);
-  if (t == 1 && !target.color) return;
+  if (t == 1 && !target.ct) return;
   show_tab(t);
 }
 
@@ -231,7 +234,7 @@ static void point_control(const Target &t, bool from_list) {
     if (ok) lv_obj_add_flag(swatches[i], LV_OBJ_FLAG_CLICKABLE);
     else lv_obj_clear_flag(swatches[i], LV_OBJ_FLAG_CLICKABLE);
   }
-  lv_obj_set_style_opa(tabs[1], t.color ? LV_OPA_COVER : LV_OPA_20, 0);
+  lv_obj_set_style_opa(tabs[1], t.ct ? LV_OPA_COVER : LV_OPA_20, 0);
   if (t.group) lv_obj_clear_flag(lights_btn, LV_OBJ_FLAG_HIDDEN);
   else lv_obj_add_flag(lights_btn, LV_OBJ_FLAG_HIDDEN);
   show_tab(0);
@@ -274,15 +277,21 @@ static void build_control_screen() {
   lv_obj_set_style_bg_color(ctrl_scr, lv_color_black(), 0);
   lv_obj_clear_flag(ctrl_scr, LV_OBJ_FLAG_SCROLLABLE);
 
-  // Outer ring: LCARS frame (COLOR tab), colour wheel (HUE) or brightness gauge (INTENSITY).
+  // Outer ring: LCARS frame (COLOR tab), white temperature scale (WHITE) or brightness gauge (INTENSITY).
   ctrl_frame = layer(ctrl_scr);
   static const char *codes[4] = {"35", "62", "09", "47"};
   lcars_ring(ctrl_frame, false, codes);
 
-  ctrl_wheel = layer(ctrl_scr);
-  for (int i = 0; i < 36; i++)  // hue 0 at the top, increasing clockwise
-    arc(ctrl_wheel, RING_D, RING_THIN, 270 + i * 10, 270 + i * 10 + 9, hsv_rgb(i * 65536 / 36 + 910, 254, 1), false);
-  wheel_marker = arc(ctrl_wheel, RING_D, 28, 267, 273, 0xFFFFFF, true);
+  ctrl_temps = layer(ctrl_scr);
+  for (int i = 0; i < 27; i++) {  // warm at the bottom left, over the top, to cool at the bottom right
+    int ct = CT_MAX - (CT_MAX - CT_MIN) * (i * 10 + 5) / 270;
+    arc(ctrl_temps, RING_D, RING_THIN, 135 + i * 10, 135 + i * 10 + 9, ct_rgb(ct, 1), false);
+  }
+  lv_obj_t *warm = text(ctrl_temps, &lcars_16, C_PEACH, "WARM");
+  lv_obj_align(warm, LV_ALIGN_BOTTOM_LEFT, 62, -40);
+  lv_obj_t *cool = text(ctrl_temps, &lcars_16, C_SKY, "COOL");
+  lv_obj_align(cool, LV_ALIGN_BOTTOM_RIGHT, -62, -40);
+  temp_marker = arc(ctrl_temps, RING_D, 28, 267, 273, 0xFFFFFF, true);
 
   ctrl_gauge = lv_arc_create(ctrl_scr);
   lv_obj_set_size(ctrl_gauge, RING_D, RING_D);
@@ -300,20 +309,20 @@ static void build_control_screen() {
   lv_obj_set_style_anim_time(ctrl_gauge, 0, 0);
 
   ctrl_title = text(ctrl_scr, &lcars_22, C_ORANGE, "");
-  lv_obj_set_size(ctrl_title, 170, 30);
+  lv_obj_set_size(ctrl_title, 160, 30);
   lv_obj_set_style_text_align(ctrl_title, LV_TEXT_ALIGN_CENTER, 0);
   lv_label_set_long_mode(ctrl_title, LV_LABEL_LONG_DOT);
-  lv_obj_align(ctrl_title, LV_ALIGN_TOP_MID, 0, 46);
+  lv_obj_align(ctrl_title, LV_ALIGN_TOP_MID, 0, 48);
 
-  static const char *tab_names[3] = {"COLOR", "HUE", "INTENSITY"};
+  static const char *tab_names[3] = {"COLOR", "WHITE", "INTENSITY"};
   for (int i = 0; i < 3; i++)
-    tabs[i] = pill(ctrl_scr, 66 + i * 78, 80, 72, 28, C_PURPLE, tab_names[i], on_tab, (void *)(intptr_t)i);
+    tabs[i] = pill(ctrl_scr, 75 + i * 72, 84, 66, 26, C_PURPLE, tab_names[i], on_tab, (void *)(intptr_t)i);
 
   // COLOR tab: 8 colours and 4 whites
   swatch_layer = layer(ctrl_scr);
   for (int i = 0; i < 12; i++) {
-    int x = 96 + (i % 4) * 44, y = 118 + (i / 4) * 44;
-    lv_obj_t *s = block(swatch_layer, x, y, 36, 36, LV_RADIUS_CIRCLE, PRESETS[i].rgb);
+    int x = 100 + (i % 4) * 42, y = 120 + (i / 4) * 41;
+    lv_obj_t *s = block(swatch_layer, x, y, 34, 34, LV_RADIUS_CIRCLE, PRESETS[i].rgb);
     lv_obj_add_flag(s, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_ext_click_area(s, 4);
     lv_obj_set_style_border_color(s, lv_color_white(), LV_STATE_PRESSED);
@@ -322,14 +331,14 @@ static void build_control_screen() {
     swatches[i] = s;
   }
 
-  // HUE / INTENSITY tabs: a preview of the current colour with its value
-  preview = block(ctrl_scr, 120, 118, 120, 120, LV_RADIUS_CIRCLE, C_DIM);
+  // WHITE / INTENSITY tabs: a preview of the current colour with its value
+  preview = block(ctrl_scr, 124, 120, 112, 112, LV_RADIUS_CIRCLE, C_DIM);
   preview_label = text(preview, &lcars_34, 0x000000, "");
   lv_obj_center(preview_label);
 
-  pill(ctrl_scr, 70, 256, 70, 34, C_LILAC, "BACK", on_ctrl_back, nullptr);
-  power_btn = pill(ctrl_scr, 145, 256, 70, 34, C_GOLD, "ON", on_power, nullptr);
-  lights_btn = pill(ctrl_scr, 220, 256, 70, 34, C_SKY, "LIGHTS", on_lights_btn, nullptr);
+  pill(ctrl_scr, 78, 246, 64, 34, C_LILAC, "BACK", on_ctrl_back, nullptr);
+  power_btn = pill(ctrl_scr, 148, 246, 64, 34, C_GOLD, "ON", on_power, nullptr);
+  lights_btn = pill(ctrl_scr, 218, 246, 64, 34, C_SKY, "LIGHTS", on_lights_btn, nullptr);
 }
 
 // ---------- Called from the LVGL task every 20 ms ----------
@@ -347,11 +356,10 @@ static void menu_tick() {
   if (ui_mode == MODE_LIST) {
     lv_obj_scroll_by_bounded(list_box, 0, -clicks * 42, LV_ANIM_ON);
   } else if (ui_mode == MODE_CONTROL) {
-    if (tab == 1 && target.color) {
-      t_use_ct = false;
-      t_sat = 254;
-      t_hue = (t_hue + clicks * HUE_STEP) & 0xFFFF;
-      mark(F_HS);
+    if (tab == 1 && target.ct) {  // clockwise = cooler, matching the scale
+      t_use_ct = true;
+      t_ct = constrain(t_ct - clicks * CT_STEP, CT_MIN, CT_MAX);
+      mark(F_CT);
     } else {
       t_bri = constrain(t_bri + clicks * BRI_STEP, 1, 254);
       mark(F_BRI);

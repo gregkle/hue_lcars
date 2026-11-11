@@ -1,7 +1,10 @@
-// Main screen: room title, brightness meter, ALERT/RESET slider, ROOM and COLOR buttons,
+// Main screen: room title, brightness meter, RED ALERT / RESET hold button, ROOM and COLOR buttons,
 // status, battery. Plus the red-alert theme and serial screenshots.
 
-static lv_obj_t *main_scr, *slider, *slider_layer, *status, *title, *battery_label, *battery_block;
+static lv_obj_t *main_scr, *status, *title, *battery_label, *battery_block;
+static lv_obj_t *alert_btn, *alert_text;  // alert_btn is an lv_bar: its indicator is the hold fill
+static bool alert_fired = false;  // this press already triggered
+static const int AB_W = 190, AB_H = 46, AB_X = 180 - AB_W / 2, AB_Y = 104, AB_INSET = 5;
 static const int N_LEVEL = 12;
 static lv_obj_t *level_blocks[N_LEVEL];
 static bool themed_alert = false;
@@ -20,14 +23,84 @@ static void show(uint32_t color, const char *t) {
   }
 }
 
-static void on_slider(lv_event_t *e) {
+// ---------- RED ALERT / RESET hold button ----------
+// Pressing sinks the button a little and grows a fill across it; it fires when the fill completes
+// (HOLD_MS). Letting go early drains it again. The button is a bar widget, so the fill stays
+// inside its rounded ends; the press effect changes its real size (no transform layers).
+static void fill_exec(void *, int32_t v) { lv_bar_set_value(alert_btn, v, LV_ANIM_OFF); }
+
+static void inset_exec(void *, int32_t d) {
+  lv_obj_set_pos(alert_btn, AB_X + d, AB_Y + d / 2);
+  lv_obj_set_size(alert_btn, AB_W - 2 * d, AB_H - d);
+}
+
+static void run_anim(lv_anim_exec_xcb_t exec, int from, int to, int ms, lv_anim_ready_cb_t done) {
+  lv_anim_del(alert_btn, exec);
+  lv_anim_t a;
+  lv_anim_init(&a);
+  lv_anim_set_var(&a, alert_btn);
+  lv_anim_set_exec_cb(&a, exec);
+  lv_anim_set_values(&a, from, to);
+  lv_anim_set_time(&a, max(ms, 1));
+  if (done) lv_anim_set_ready_cb(&a, done);
+  lv_anim_start(&a);
+}
+
+static int current_inset() { return (AB_W - lv_obj_get_width(alert_btn)) / 2; }
+
+static void fill_complete(lv_anim_t *) {
+  alert_fired = true;
+  request(alert_active ? CMD_RESET : CMD_FLASH);
+  lv_obj_set_style_bg_color(alert_btn, lv_color_white(), LV_PART_INDICATOR);  // brief white: "got it"
+}
+
+static void press_look(bool pressed) {
+  run_anim(inset_exec, current_inset(), pressed ? AB_INSET : 0, 90, nullptr);
+}
+
+static void on_alert_btn(lv_event_t *e) {
   lv_event_code_t code = lv_event_get_code(e);
-  int v = lv_slider_get_value(slider);
-  if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
-    if (v >= SLIDE_TRIGGER) request(CMD_FLASH);
-    else if (v <= -SLIDE_TRIGGER) request(CMD_RESET);
-    lv_slider_set_value(slider, 0, LV_ANIM_ON);  // spring back to the middle
+  int v = lv_bar_get_value(alert_btn);
+  if (code == LV_EVENT_PRESSED) {
+    alert_fired = false;
+    lv_obj_set_style_bg_color(alert_btn, lv_color_hex(alert_active ? C_PEACH : C_GOLD), LV_PART_INDICATOR);
+    press_look(true);
+    run_anim(fill_exec, v, 1000, HOLD_MS * (1000 - v) / 1000, fill_complete);
+  } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
+    press_look(false);
+    run_anim(fill_exec, v, 0, alert_fired ? 400 : 200, nullptr);
   }
+}
+
+// Serial 'P' / 'p': show / clear the pressed look without firing (for screenshots).
+static void debug_press(bool on) {
+  lv_anim_del(alert_btn, nullptr);
+  inset_exec(nullptr, on ? AB_INSET : 0);
+  lv_obj_set_style_bg_color(alert_btn, lv_color_hex(alert_active ? C_PEACH : C_GOLD), LV_PART_INDICATOR);
+  lv_bar_set_value(alert_btn, on ? 500 : 0, LV_ANIM_OFF);
+}
+
+static void build_alert_button(lv_obj_t *scr) {
+  alert_btn = lv_bar_create(scr);
+  lv_obj_set_pos(alert_btn, AB_X, AB_Y);
+  lv_obj_set_size(alert_btn, AB_W, AB_H);
+  lv_bar_set_range(alert_btn, 0, 1000);
+  lv_bar_set_value(alert_btn, 0, LV_ANIM_OFF);
+  for (lv_part_t part : {LV_PART_MAIN, LV_PART_INDICATOR}) {
+    lv_obj_set_style_radius(alert_btn, AB_H / 2, part);
+    lv_obj_set_style_bg_opa(alert_btn, LV_OPA_COVER, part);
+    lv_obj_set_style_border_width(alert_btn, 0, part);
+    lv_obj_set_style_pad_all(alert_btn, 0, part);
+  }
+  lv_obj_set_style_bg_color(alert_btn, lv_color_hex(C_RED), LV_PART_MAIN);
+  lv_obj_set_style_bg_color(alert_btn, lv_color_hex(C_GOLD), LV_PART_INDICATOR);
+  lv_obj_set_style_anim_time(alert_btn, 0, 0);
+  lv_obj_add_flag(alert_btn, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_clear_flag(alert_btn, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_ext_click_area(alert_btn, 8);
+  alert_text = text(alert_btn, &lcars_22, 0x000000, "RED ALERT");
+  lv_obj_center(alert_text);
+  lv_obj_add_event_cb(alert_btn, on_alert_btn, LV_EVENT_ALL, nullptr);
 }
 
 static void apply_theme(bool alert) {
@@ -37,14 +110,16 @@ static void apply_theme(bool alert) {
   themed_alert = alert;
 }
 
-// Title and slider follow the selected room (the slider needs colour bulbs to flash).
+// Title and alert button follow the selected room (red alert needs colour bulbs).
 static void update_room_view() {
   HueRoom room;
   bool known = get_room(sel_room, room);
   lv_label_set_text(title, known ? room.name : (model_gen ? "NO ROOM" : "ACCESSING"));
   bool can_alert = alert_active || (known && room.n_color > 0);
-  if (can_alert) lv_obj_clear_flag(slider_layer, LV_OBJ_FLAG_HIDDEN);
-  else lv_obj_add_flag(slider_layer, LV_OBJ_FLAG_HIDDEN);
+  if (can_alert) lv_obj_clear_flag(alert_btn, LV_OBJ_FLAG_HIDDEN);
+  else lv_obj_add_flag(alert_btn, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_set_style_bg_color(alert_btn, lv_color_hex(alert_active ? C_LILAC : C_RED), 0);
+  lv_label_set_text(alert_text, alert_active ? "RESET" : "RED ALERT");
   shown_model_gen = model_gen;
   strcpy(shown_room, sel_room);
 }
@@ -130,50 +205,23 @@ extern "C" void ui_build(void) {
   lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
   lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 66);
 
-  // Slider: RESET pill on the left, ALERT pill on the right, orange handle in the middle.
-  slider_layer = layer(scr);
-  const int SW = 236, SX = 180 - SW / 2, SY = 106, SH = 48, PW = 62;
-  lv_obj_t *rp = block(slider_layer, SX, SY, PW, SH, SH / 2, C_LILAC);
-  lv_obj_t *ap = block(slider_layer, SX + SW - PW, SY, PW, SH, SH / 2, C_RED);
-  lv_obj_align(text(rp, &lcars_22, 0x000000, "RESET"), LV_ALIGN_CENTER, 0, 0);
-  lv_obj_align(text(ap, &lcars_22, 0x000000, "ALERT"), LV_ALIGN_CENTER, 0, 0);
-  lv_obj_t *rail = block(slider_layer, SX + PW, SY + SH / 2 - 2, SW - 2 * PW, 4, 0, C_PEACH);
-  theme_register(rail, C_PEACH, C_ALERT2);
-
-  slider = lv_slider_create(slider_layer);
-  lv_obj_set_pos(slider, SX + SH / 2, SY);
-  lv_obj_set_size(slider, SW - SH, SH);  // handle centre travels the full track
-  lv_slider_set_mode(slider, LV_SLIDER_MODE_SYMMETRICAL);
-  lv_slider_set_range(slider, -100, 100);
-  lv_slider_set_value(slider, 0, LV_ANIM_OFF);
-  lv_obj_add_flag(slider, LV_OBJ_FLAG_ADV_HITTEST);  // only the handle can be grabbed
-  lv_obj_set_style_bg_opa(slider, LV_OPA_TRANSP, LV_PART_MAIN);
-  lv_obj_set_style_bg_opa(slider, LV_OPA_TRANSP, LV_PART_INDICATOR);
-  lv_obj_set_style_bg_color(slider, lv_color_hex(C_ORANGE), LV_PART_KNOB);
-  lv_obj_set_style_radius(slider, 8, LV_PART_KNOB);
-  lv_obj_set_style_pad_all(slider, 0, LV_PART_KNOB);
-  lv_obj_set_style_border_color(slider, lv_color_black(), LV_PART_KNOB);
-  lv_obj_set_style_border_width(slider, 4, LV_PART_KNOB);
-  lv_obj_set_style_shadow_width(slider, 0, LV_PART_KNOB);
-  lv_obj_set_style_anim_time(slider, 250, 0);
-  lv_obj_set_ext_click_area(slider, 12);
-  lv_obj_add_event_cb(slider, on_slider, LV_EVENT_ALL, nullptr);
+  build_alert_button(scr);
 
   status = text(scr, &lcars_34, C_GREY, "");
   lv_obj_set_width(status, 240);
   lv_obj_set_style_text_align(status, LV_TEXT_ALIGN_CENTER, 0);
   lv_label_set_long_mode(status, LV_LABEL_LONG_CLIP);
-  lv_obj_align(status, LV_ALIGN_TOP_MID, 0, 162);
+  lv_obj_align(status, LV_ALIGN_TOP_MID, 0, 158);
   set_status(C_GREY, "CONNECTING");
 
   // Menu buttons
-  lv_obj_t *rb = pill(scr, 82, 218, 94, 34, C_SKY, "ROOM", on_room_btn, nullptr);
-  lv_obj_t *cb = pill(scr, 184, 218, 94, 34, C_GOLD, "COLOR", on_color_btn, nullptr);
+  lv_obj_t *rb = pill(scr, 88, 214, 88, 34, C_SKY, "ROOM", on_room_btn, nullptr);
+  lv_obj_t *cb = pill(scr, 184, 214, 88, 34, C_GOLD, "COLOR", on_color_btn, nullptr);
   theme_register(rb, C_SKY, C_ALERT3);
   theme_register(cb, C_GOLD, C_ALERT1);
 
   battery_label = text(scr, &lcars_16, C_PEACH, "PWR");
-  lv_obj_align(battery_label, LV_ALIGN_TOP_MID, 0, 266);
+  lv_obj_align(battery_label, LV_ALIGN_TOP_MID, 0, 260);
 
   lv_timer_create(ui_timer_cb, 20, nullptr);
   analogSetPinAttenuation(BATTERY_PIN, ADC_11db);
