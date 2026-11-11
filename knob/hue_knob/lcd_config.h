@@ -19,7 +19,7 @@
 #define EXAMPLE_LVGL_TICK_PERIOD_MS    2                          //Timer time
 #define EXAMPLE_LVGL_TASK_MAX_DELAY_MS 500                        //LVGL Indicates the maximum time for a task to run
 #define EXAMPLE_LVGL_TASK_MIN_DELAY_MS 1                          //LVGL Minimum time to run a task
-#define EXAMPLE_LVGL_TASK_STACK_SIZE   (4 * 1024)                 //LVGL runs the task stack
+#define EXAMPLE_LVGL_TASK_STACK_SIZE   (12 * 1024)                 //LVGL runs the task stack
 #define EXAMPLE_LVGL_TASK_PRIORITY     2                          //LVGL Running task priority
 
 #define EXAMPLE_TOUCH_ADDR                0x15

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Fetch LVGL v8.4.0 (with Waveshare's one-line display fix) and the ESP32 Arduino core.
+# Fetch LVGL v8.4.0 (with Waveshare's one-line display fix), ArduinoJson and the ESP32 Arduino core.
 set -e
 cd "$(dirname "$0")"
 
@@ -13,6 +13,7 @@ if command -v arduino-cli >/dev/null 2>&1; then
         https://espressif.github.io/arduino-esp32/package_esp32_index.json 2>/dev/null || true
     arduino-cli core update-index
     arduino-cli core install esp32:esp32@3.2.0
+    arduino-cli lib install ArduinoJson@7.2.1
 else
     echo "arduino-cli not found: install it, then re-run (see README.md)" >&2
 fi
